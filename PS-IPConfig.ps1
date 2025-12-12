@@ -1,43 +1,88 @@
-#Requires -RunAsAdministrator
-#Requires -Version 5.1
 
-## Variabler
-# Säkerställ att vi använder den absoluta sökvägen för robusthet.
+## Sökvägar
 $ScriptPath = $PSScriptRoot 
 $ConfigFile = Join-Path -Path $ScriptPath -ChildPath "Config.json"
 $ConfigData = $null
 
 ## Globala Funktioner
+
+# Funktion för att convertera två arrayer till ett ps objekt
+function Convert-ArrayToObjects {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true, Position=0)]
+        [string[]]$Titles, # Titlar/Namn
+        
+        [Parameter(Mandatory=$true, Position=1)]
+        [object[][]]$Data # Tvådimensionella array med data
+    )
+
+    # Kontrollera att all data har titlar/namn
+    if ($Data[0].Count -ne $Titles.Count) {
+        Write-Error "Antalet titlar/namn ($($Titles.Count)) matchar inte antalet kolumner i datan ($($Data[0].Count))."
+        return
+    }
+
+    $ResultObjects = 
+    foreach ($Row in $Data) {
+        
+        # Skapa en ordnad hashtabell för att lagra Key/Value-par för det aktuella objektet
+        $HashTable = [ordered]@{ }
+        
+        # Loopa igenom titlarna
+        for ($i = 0; $i -lt $Titles.Count; $i++) {
+            
+            $Title = $Titles[$i]
+            $Value = $Row[$i]
+            
+            # Lägg till paret i hashtabellen.
+            $HashTable.Add($Title, $Value)
+        }
+
+        # Konvertera hashtabellen till ett PSCustomObject och skicka till pipelinen
+        [PSCustomObject]$HashTable
+    }
+
+    return $ResultObjects
+}
+
 # Funktion för att skriva titel och beskrivning för aktuell menyn
 function Write-Title {
     param(
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$true, Position=0)]
         [string]$Title,
 		
+        [Parameter(Mandatory=$false, Position=1)]
+        [string]$Body,
+		
         [Parameter(Mandatory=$false)]
-        [string]$Body
+        [string]$TitleColor="Magenta",
+		
+        [Parameter(Mandatory=$false)]
+        [string]$BodyColor="Cyan"
     )
 	Clear-Host
-    Write-Host "`n--- $($Title.ToUpper()) ---" -ForegroundColor Magenta
-    Write-Host "$Body`n" -ForegroundColor Cyan
+    Write-Host "`n--- $($Title.ToUpper()) ---" -ForegroundColor $TitleColor
+	if ($Body){
+		Write-Host "$Body`n" -ForegroundColor $BodyColor
+	}
 }
 
 # Funktion för att skriva en notis till användaren
 function Write-Notice {
     param(
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$true, Position=0)]
         [string]$Notice,
 		
         [Parameter(Mandatory=$false)]
-        [string]$ForegroundColor=""
+        [string]$ForegroundColor="White",
+		
+        [Parameter(Mandatory=$false)]
+        [float]$SleepTime=1.5
     )
 	
-	if ($ForegroundColor){
-		Write-Host "$Notice" -ForegroundColor $ForegroundColor
-	}else{
-		Write-Host "$Notice"
-	}
-	Start-Sleep -Seconds 1.5
+	Write-Host $Notice -ForegroundColor $ForegroundColor
+	Start-Sleep -Seconds $SleepTime
 }
 
 # Funktion för att skapa en lista över systemets nätverkskort. 
@@ -51,7 +96,7 @@ function Get-SystemAdapters {
 
 }
 
-# Funktion som tar en lista av nätverkskortssnamn och hämtar ip-information om dem
+# Funktion som tar en lista av nätverkskortssnamn och hämtar ip-adresser
 function Format-IPList {
     param(
         [Parameter(Mandatory=$true, Position=0)]
@@ -62,36 +107,39 @@ function Format-IPList {
     
     foreach ($Adapter in $AdapterNames) {
         
-        # Hämta IP-information för det aktuella kortet
+        # Hämta IP-adresser för det aktuella kortet
 		try {
 			$IPConfig = Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias $Adapter
 			
 			# Läs ut IP-adressen
 			if ($IPConfig.PrefixOrigin) {
+				# DHCP?
 				if ($IPConfig.PrefixOrigin -eq "Manual"){
 					$DHCPStatus = "Nej"
-					$CurrentIP = $IPConfig[0].IPAddress
 				} else {
 					$DHCPStatus = "Ja"
-					$CurrentIP = $IPConfig[0].IPAddress
 				}
+				# Kopiera IP-Adress
+				$CurrentIP = $IPConfig[0].IPAddress
 			} else {
-				$DHCPStatus = "-"
 				$CurrentIP = "-"
+				$DHCPStatus = "-"
 			}
 		}
 		catch {
-			Write-Notice -Notice "`nFel vid läsning av IP-information." -ForegroundColor Red
-            $CurrentIP = " - "
+			Write-Notice "`nFel vid läsning av IP-adress." -ForegroundColor Red
+            $CurrentIP = "-"
+			$DHCPStatus = "-"
 		}
         
         # Skapa ett nytt objekt med nätverkskortets namn och den aktuella IP-adressen
         $AdapterObject = [PSCustomObject]@{
-            Name = $Adapter
-            CurrentIP = $CurrentIP
+            Nätverkskort = $Adapter
+            "Aktuell IP" = $CurrentIP
 			DHCP = $DHCPStatus
         }
-        
+		
+        # Kopiera till array
         $ResultList += $AdapterObject
     }    
 	Return $ResultList
@@ -100,7 +148,7 @@ function Format-IPList {
 # Funktion för att läsa användar input
 function Read-RequiredInput {
     param(
-		[Parameter(Mandatory=$true)]
+		[Parameter(Mandatory=$true, Position=0)]
         [string]$Prompt,
 		
         [Parameter(Mandatory=$false)]
@@ -108,48 +156,151 @@ function Read-RequiredInput {
     )
     do {
         $Input = Read-Host $Prompt $(if ($DefaultValue) {"Standardvärde: '$DefaultValue'"})
-        if (-not $Input) { $Input = $DefaultValue }
+		
+		# Ska standardvärde användas
+        if (-not $Input -and $DefaultValue) { $Input = $DefaultValue }
+		
+		# Data inmatad?
         if (-not [string]::IsNullOrWhiteSpace($Input)) {
             return $Input.Trim()
         }
-        Write-Notice -Notice "Input får inte vara tomt. Försök igen." -ForegroundColor Red
+		
+		# Ingen data inmatad
+        Write-Notice -Notice "Ingen data inmatad. Försök igen." -ForegroundColor Red
     } while ($true)
 }
 
 # Funktion för användarval. Q/q avbryter val
 function Read-UserChoice {
+    [CmdletBinding()]
     param(
-        [Parameter(Mandatory=$true)]
-        [string]$Prompt,
-
-        [Parameter(Mandatory=$true)]
-        [array]$Options
+		# Array med strängar eller objekt
+        [Parameter(Mandatory=$true, Position=0)]
+        [ValidateNotNullOrEmpty()]
+        [object[]]$Choices,
+        
+		# Rubrik för menyn
+        [Parameter(Mandatory=$false)]
+        [string]$Title = "Gör ett val:",
+        
+		# Vilka kolumner/vilken data som ska visas vid objekt i Choices
+        [Parameter(Mandatory=$false)]
+        [string[]]$DisplayProperties = @(),
+		
+		# Ska "Klar" visas
+        [Parameter(Mandatory=$false)]
+        [bool[]]$ShowDone = $false,
+		
+		# Ska "Titlar" visas
+        [Parameter(Mandatory=$false)]
+        [bool[]]$ShowTitles = $false
     )
-    
-    do {
-        Write-Host ""
-        Write-Host "$Prompt" -ForegroundColor Yellow
-        for ($i = 0; $i -lt $Options.Count; $i++) {
-            Write-Host "$($i+1). $($Options[$i])"
+
+	# Initiera variablerna
+    $MenuList = @()
+    $MaxChoice = 0
+    $DisplayHeaders = @("#")
+
+    # Förbered objekten för Format-Table
+    for ($i = 0; $i -lt $Choices.Count; $i++) {
+        $Index = $i + 1
+        $MaxChoice = $Index
+        $CurrentObject = $Choices[$i]
+        
+        # Basobjekt för tabellen
+        $ItemHashTable = [ordered]@{
+            "#" = $Index
+            "OriginalObject" = $CurrentObject
         }
-        Write-Host "Q. Avsluta"
+
+        # Lägg till de specificerade egenskaperna till hash-tabellen
+        if ($DisplayProperties.Count -gt 0 -and $CurrentObject -is [psobject]) {
+            foreach ($PropName in $DisplayProperties) {
+                # Se till att egenskapen faktiskt finns, annars skrivs ingenting ut
+                if ($CurrentObject.PSObject.Properties.Name -contains $PropName) {
+                    $ItemHashTable[$PropName] = $CurrentObject.$PropName.ToString()
+                    
+                    # Lägg till rubriken (endast en gång vid första iterationen)
+                    if ($i -eq 0) {
+                        $DisplayHeaders += $PropName
+                    }
+                }
+            }
+        } 
+        # Fallback om ingen $DisplayProperties angavs (eller om inmatningen var strängar)
+        elseif ($i -eq 0 -and $DisplayProperties.Count -eq 0) {
+            # Om inga kolumner specificerats, faller vi tillbaka till att visa text i en kolumn
+            $ItemHashTable["Alternativ"] = $CurrentObject.ToString()
+            $DisplayHeaders += "Alternativ"
+        } 
+        elseif ($DisplayProperties.Count -eq 0) {
+            # Används för efterföljande rader i fallback-fallet
+            $ItemHashTable["Alternativ"] = $CurrentObject.ToString()
+        }
+
+        $MenuList += [PSCustomObject]$ItemHashTable
+    }
+    
+    # Skapa den listan och lägg till (inklusive "Klar")
+    $ReadyObject = [ordered]@{ "#"=0 }
+    foreach ($Header in $DisplayHeaders -notlike '#') {
+        $ReadyObject[$Header] = ""
+    }
+	# Ska "Klar" visas?
+	if ($ShowDone -eq $true){
+		# Lägg till alternativet "Klar"
+		$ReadyObject[$DisplayHeaders[1]] = "Klar"
+		$ReadyObject["OriginalObject"] = "Klar"
+		
+		$OptionList = ([PSCustomObject]$ReadyObject), $MenuList
+	} else {
+		# Lägg inte till "Klar"
+		$OptionList = $MenuList
+	}
+
+    # Räkna ut aktuella bredden på terminalen
+    $ConsoleWidth = $Host.UI.RawUI.BufferSize.Width - 2
+    if ($ConsoleWidth -le 0) { $ConsoleWidth = 80 } # Sätt 80 ifall värdet blir fel
+
+    Write-Host "`n$Title" -ForegroundColor Yellow
+    Write-Host "------------------------------------"
+
+    # Generera tabellen
+    $TableString = $OptionList | Format-Table -Property $DisplayHeaders -AutoSize | Out-String -Width $ConsoleWidth
+
+    # Skriv ut rader hoppa över de första 3 raderna (Tom, Rubrik, Linje) om $ShowTitles är false
+    $TableLines = $TableString -split "`n"
+    $TableLines[$(if ($ShowTitles -eq $true) {1} else {3})..($TableLines.Count - 4)] | Out-Host
+    
+    Write-Host "Q. Avsluta"
+    Write-Host "------------------------------------"
+
+    # Användarval
+    while ($true) {
+        $Choice = Read-Host "Ange ditt val ($(if ($ShowDone -eq $true) {0}else{1})-$MaxChoice, eller Q)"
         
-        $Choice = Read-RequiredInput -Prompt "Ange ditt val (1-$($Options.Count) eller Q)"
+        # Q valt
+        if ($Choice -eq 'Q') {
+            return "Q"
+        }
         
-		try{
-			if ([int]$Choice -ge 1 -and [int]$Choice -le $Options.Count) {
-				return $Choice
-			}
-		}
-		catch{
-			if ($Choice -eq "Q") {
-				return $Choice
-			}
-		}
+        # Klar valt
+        if ($Choice -eq '0' -and $ShowDone -eq $true) {
+            return "D"
+        }
         
-        Write-Notice -Notice "`nFelaktigt val. Försök igen." -ForegroundColor Red
-        
-    } while ($true)
+        # Ett specifikt val
+        if ([int]$Choice -ge 1 -and [int]$Choice -le $MaxChoice) {
+            $Index = [int]$Choice
+            $SelectedItem = $MenuList | Where-Object { $_.'#' -eq $Index } | Select-Object -First 1
+            
+            # Returnerar det valda originalobjektet
+            return $SelectedItem.OriginalObject
+            
+        } else {
+            Write-Host "Ogiltigt val. Försök igen." -ForegroundColor Red
+        }
+    }
 }
 
 ## Funktioner för Konfigurationshantering
@@ -158,9 +309,9 @@ function Load-ConfigData {
     # Kontrollera om config filen finns
 	# Om config filen inte finns starta wizard
     if (-not (Test-Path $ConfigFile)) {
-        Write-Notice -Notice "Konfigurationsfilen '$ConfigFile' hittades inte. Startar wizard..." -ForegroundColor Yellow
+        Write-Notice "Konfigurationsfilen '$ConfigFile' hittades inte. Startar wizard..." -ForegroundColor Yellow
         $Global:ConfigData = Get-DefaultConfig
-        Save-ConfigData -Data $Global:ConfigData
+        Save-ConfigData $Global:ConfigData
         return
     }
     
@@ -178,7 +329,7 @@ function Load-ConfigData {
 # Funktion för att spara data till config fil
 function Save-ConfigData {
     param(
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$true, Position=0)]
         [psobject]$Data
     )
     try {
@@ -196,7 +347,7 @@ function Get-DefaultConfig {
 	$Body = "Scripter hittade ingen konfigurationsfil. Följ instuktionerna för att skapa en ny fil"
 	
 	# Skriv title
-	Write-Title -Title $Title -Body $Body
+	Write-Title $Title $Body
 	
     $SelectedAdapters = @()
 	$FavoriteConfigs = @()
@@ -212,47 +363,44 @@ function Get-DefaultConfig {
         do {
 	
 			# Skriv title
-			Write-Title $Title -Body $Body
+			Write-Title $Title $Body
 	
             # De kort som finns på systemet men ännu inte valts
             $AvailableToChoose = $SystemAdapters | Where-Object {$_ -notin $SelectedAdapters.Name}
             
             if (-not $AvailableToChoose) {
-                Write-Notice -Notice "Alla nätverkskort på systemet är redan valda." -ForegroundColor Green
+                Write-Notice "Alla nätverkskort på systemet är redan valda." -ForegroundColor Green
                 break
             }
             
 			# Skapa lista med aktuell IP-Adress
 			Write-Host "Läser in IP-adresser..."
-			$AdapterList = Format-IPList -AdapterNames $AvailableToChoose
-			$AdapterMenu = $AdapterList | ForEach-Object { 
-				"$($_.Name)	(IP: $($_.CurrentIP))	(DHCP: $($_.DHCP))"
-			}
+			$AdapterList = Format-IPList $AvailableToChoose
 	
 			# Skriv title
-			Write-Title $Title -Body $Body
+			Write-Title $Title $Body
 	
             # Lägg till valet "Klar" i menyn som val 1
 			$MenuOptions = @("Klar") + $AdapterMenu
             
-            $AdapterChoice = Read-UserChoice -Prompt "Välj ett nätverkskort att lägga till" -Options $MenuOptions
+            $AdapterChoice = Read-UserChoice $AdapterList -Title "Välj ett nätverkskort att lägga till" -DisplayProperties @("Nätverkskort", "Aktuell IP", "DHCP") -ShowDone $true -ShowTitles $true
             
             if ($AdapterChoice -eq "Q") { 
                 # Användaren valde Q, avbryt hela konfigurationen
-                Write-Notice -Notice "Konfiguration avbruten." -ForegroundColor Red
+                Write-Notice "Konfiguration avbruten." -ForegroundColor Red
                 exit 1 
             }
 			
-            if ($AdapterChoice -eq 1) {
+            if ($AdapterChoice -eq "D") {
                 # Användaren valde "KLAR"
                 break
             }
 			
 			# Spara namnet på det valda nätverkskortet
-            $AdapterName = $AvailableToChoose[$AdapterChoice - 2]
+            $AdapterName = $AdapterChoice."Nätverkskort"
             
             # Skapa alias för det valda nätverkskortet
-            $AdapterAlias = Read-RequiredInput -Prompt "Ange ett alias för '$AdapterName'." -DefaultValue $AdapterName
+            $AdapterAlias = Read-RequiredInput "Ange ett alias för '$AdapterName'." -DefaultValue $AdapterName
             
             # Skapa det nya objektet och lägg till i listan
             $SelectedAdapters += [pscustomobject]@{
@@ -260,7 +408,7 @@ function Get-DefaultConfig {
                 Alias = $AdapterAlias
             }
             
-            Write-Notice -Notice "Nätverkskortet '$AdapterName' med alias '$AdapterAlias' lades till i listan." -ForegroundColor Green
+            Write-Notice "Nätverkskortet '$AdapterName' med alias '$AdapterAlias' lades till i listan." -ForegroundColor Green
             
         } while ($true)
     }
@@ -274,7 +422,7 @@ function Get-DefaultConfig {
 	do{
 	$Continue = $false
     # Ska EXEMPEL-konfigurationen läggas till
-    $AddExample = Read-RequiredInput -Prompt "Vill du lägga till 'EXEMPEL - Statisk' konfigurationen? (J/N)"
+    $AddExample = Read-RequiredInput "Vill du lägga till 'EXEMPEL - Statisk' konfigurationen? (J/N)"
 
 		if ($AddExample -eq "J") {
 			$FavoriteConfigs += [pscustomobject]@{
@@ -290,12 +438,12 @@ function Get-DefaultConfig {
 			Write-Host "Statisk EXEMPEL-konfiguration hoppades över." -ForegroundColor Yellow
 		}
 		else {
-			Write-Notice -Notice "Ogiltligt val" -ForegroundColor Red
+			Write-Notice "Ogiltligt val" -ForegroundColor Red
 			$Continue = $true
 		}
 	} while ($Continue)
 
-    Write-Notice -Notice "Du kan redigera, radera eller lägga till fler favoriter senare i menyn 'Hantera/Redigera'." -ForegroundColor Green
+    Write-Notice "Du kan redigera, radera eller lägga till fler favoriter senare i menyn 'Hantera/Redigera'." -ForegroundColor Green
 
     # Skapa det kompletta konfigurationsobjektet
     return @{
@@ -341,7 +489,7 @@ function Manage-Adapters {
             $AdapterToAdd = $AvailableToAdd[([int]$AddChoice - 1)]
             $Global:ConfigData.NetworkAdapters += $AdapterToAdd
             Write-Host "Kortet '$AdapterToAdd' lades till i konfigurationen." -ForegroundColor Green
-            Save-ConfigData -Data $Global:ConfigData
+            Save-ConfigData $Global:ConfigData
         }
     }
     # Radera kort
@@ -356,7 +504,7 @@ function Manage-Adapters {
             $AdapterToRemove = $CurrentAdapters[([int]$RemoveChoice - 1)]
             $Global:ConfigData.NetworkAdapters = $CurrentAdapters | Where-Object {$_ -ne $AdapterToRemove}
             Write-Host "Kortet '$AdapterToRemove' raderades från konfigurationen." -ForegroundColor Green
-            Save-ConfigData -Data $Global:ConfigData
+            Save-ConfigData $Global:ConfigData
         }
     }
 }
@@ -369,7 +517,7 @@ function Add-Favorite {
     if ($TypeChoice -eq "Q") { return }
     
     $NewConfig = @{}
-    $NewConfig.Name = Read-RequiredInput -Prompt "Ange namn för favoriten (t.ex. Kontor Statisk)"
+    $NewConfig.Name = Read-RequiredInput "Ange namn för favoriten (t.ex. Kontor Statisk)"
     
     if ([int]$TypeChoice -eq 1) { # DHCP
         $NewConfig.Type = "DHCP"
@@ -379,20 +527,20 @@ function Add-Favorite {
         
         # Enkel validering (inte komplett validering, men bättre än inget)
         do {
-            $NewConfig.IPAddress = Read-RequiredInput -Prompt "Ange IP-adress"
+            $NewConfig.IPAddress = Read-RequiredInput "Ange IP-adress"
             if ($NewConfig.IPAddress -match "^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$") { break }
             Write-Host "Ogiltigt format för IP-adress." -ForegroundColor Red
         } while ($true)
 
-        $NewConfig.SubnetMask = Read-RequiredInput -Prompt "Ange Subnätmask" -DefaultValue "255.255.255.0"
-        $NewConfig.Gateway = Read-RequiredInput -Prompt "Ange Standard Gateway"
-        $NewConfig.DNSServer = Read-RequiredInput -Prompt "Ange DNS Server" -DefaultValue "8.8.8.8"
+        $NewConfig.SubnetMask = Read-RequiredInput "Ange Subnätmask" -DefaultValue "255.255.255.0"
+        $NewConfig.Gateway = Read-RequiredInput"Ange Standard Gateway"
+        $NewConfig.DNSServer = Read-RequiredInput"Ange DNS Server" -DefaultValue "8.8.8.8"
     }
 
     # Lägg till i konfigurationen och spara
     $Global:ConfigData.FavoriteConfigurations += [pscustomobject]$NewConfig
     Write-Host "`nFavoriten '$($NewConfig.Name)' lades till." -ForegroundColor Green
-    Save-ConfigData -Data $Global:ConfigData
+    Save-ConfigData $Global:ConfigData
 }
 
 function Remove-Favorite {
@@ -419,7 +567,7 @@ function Remove-Favorite {
         $Global:ConfigData.FavoriteConfigurations = $FavoritesList
         
         Write-Host "Favoriten '$RemovedName' raderades." -ForegroundColor Green
-        Save-ConfigData -Data $Global:ConfigData
+        Save-ConfigData $Global:ConfigData
     }
 }
 
