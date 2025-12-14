@@ -1,0 +1,16 @@
+﻿{
+    "NetworkAdapters":  [
+                            {
+                                "Name":  "Wi-Fi",
+                                "Alias":  "Wi-Fi"
+                            },
+                            {
+                                "Name":  "Laptop Ethernet",
+                                "Alias":  "Laptop Ethernet"
+                            }
+                        ],
+    "FavoriteConfigurations":  {
+                                   "Name":  "Standard DHCP",
+                                   "Type":  "DHCP"
+                               }
+}
