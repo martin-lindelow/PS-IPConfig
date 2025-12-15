@@ -1,16 +1,20 @@
 ﻿{
-    "NetworkAdapters":  [
-                            {
-                                "Name":  "Wi-Fi",
-                                "Alias":  "Wi-Fi"
-                            },
-                            {
-                                "Name":  "Laptop Ethernet",
-                                "Alias":  "Laptop Ethernet"
-                            }
-                        ],
-    "FavoriteConfigurations":  {
-                                   "Name":  "Standard DHCP",
-                                   "Type":  "DHCP"
-                               }
+    "FavoriteConfigurations":  [
+                                   {
+                                       "Name":  "Standard DHCP",
+                                       "Type":  "DHCP"
+                                   },
+                                   {
+                                       "Name":  "EXEMPEL - Statisk",
+                                       "Type":  "Static",
+                                       "IPAddress":  "192.168.1.100",
+                                       "SubnetMask":  "255.255.255.0",
+                                       "Gateway":  "192.168.1.1",
+                                       "DNSServer":  "8.8.8.8"
+                                   }
+                               ],
+    "NetworkAdapters":  {
+                            "Name":  "Wi-Fi",
+                            "Alias":  "Wi-Fi"
+                        }
 }

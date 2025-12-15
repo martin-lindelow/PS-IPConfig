@@ -61,7 +61,8 @@ function Write-Title {
         [Parameter(Mandatory=$false)]
         [string]$BodyColor="Cyan"
     )
-	Clear-Host
+	#Clear-Host
+	Write-Host "--Clear--"
     Write-Host "`n--- $($Title.ToUpper()) ---" -ForegroundColor $TitleColor
 	if ($Body){
 		Write-Host "$Body`n" -ForegroundColor $BodyColor
@@ -309,10 +310,12 @@ function Load-ConfigData {
     # Kontrollera om config filen finns
 	# Om config filen inte finns starta wizard
     if (-not (Test-Path $ConfigFile)) {
-        Write-Notice "Konfigurationsfilen '$ConfigFile' hittades inte. Startar wizard..." -ForegroundColor Yellow
-        $Global:ConfigData = Get-DefaultConfig
-        Save-ConfigData $Global:ConfigData
-        return
+        Write-Notice "Konfigurationsfilen '$ConfigFile' hittades inte. Startar wizard..." -ForegroundColor Yellow -SleepTime 0
+		$Global:ConfigData = @{
+			NetworkAdapters = @()
+			FavoriteConfigurations = @()
+    }
+		Get-DefaultConfig
     }
     
 	# Försök läsa in config filen
@@ -342,76 +345,23 @@ function Save-ConfigData {
 }
 
 # Skapa en ny config file ---WIZARD---
-function Get-DefaultConfig {
-	$Title = "SKAPA KONFIGURATION"
-	$Body = "Scripter hittade ingen konfigurationsfil. Följ instuktionerna för att skapa en ny fil"
-	
-	# Skriv title
-	Write-Title $Title $Body
-	
-    $SelectedAdapters = @()
+function Get-DefaultConfig {	
 	$FavoriteConfigs = @()
-    
-    # Hämta alla nätverkskort på systemet
-	$SystemAdapters = Get-SystemAdapters | Select-Object -ExpandProperty Name
 	
-    if (-not $SystemAdapters) {
-        Write-Notice -Notice "Inga nätverkskort hittades på systemet." -ForegroundColor Red
-        exit 1 
-    }
-    else {
-        do {
-	
-			# Skriv title
-			Write-Title $Title $Body
-	
-            # De kort som finns på systemet men ännu inte valts
-            $AvailableToChoose = $SystemAdapters | Where-Object {$_ -notin $SelectedAdapters.Name}
-            
-            if (-not $AvailableToChoose) {
-                Write-Notice "Alla nätverkskort på systemet är redan valda." -ForegroundColor Green
-                break
-            }
-            
-			# Skapa lista med aktuell IP-Adress
-			Write-Host "Läser in IP-adresser..."
-			$AdapterList = Format-IPList $AvailableToChoose
-	
-			# Skriv title
-			Write-Title $Title $Body
-	
-            # Lägg till valet "Klar" i menyn som val 1
-			$MenuOptions = @("Klar") + $AdapterMenu
-            
-            $AdapterChoice = Read-UserChoice $AdapterList "Välj ett nätverkskort att lägga till" -DisplayProperties @("Nätverkskort", "Aktuell IP", "DHCP") -ShowDone $true -ShowTitles $true
-            
-            if ($AdapterChoice -eq "Q") { 
-                # Användaren valde Q, avbryt hela konfigurationen
-                Write-Notice "Konfiguration avbruten." -ForegroundColor Red
-                exit 1 
-            }
-			
-            if ($AdapterChoice -eq "D") {
-                # Användaren valde "KLAR"
-                break
-            }
-			
-			# Spara namnet på det valda nätverkskortet
-            $AdapterName = $AdapterChoice."Nätverkskort"
-            
-            # Skapa alias för det valda nätverkskortet
-            $AdapterAlias = Read-RequiredInput "Ange ett alias för '$AdapterName'." -DefaultValue $AdapterName
-            
-            # Skapa det nya objektet och lägg till i listan
-            $SelectedAdapters += [pscustomobject]@{
-                Name = $AdapterName
-                Alias = $AdapterAlias
-            }
-            
-            Write-Notice "Nätverkskortet '$AdapterName' med alias '$AdapterAlias' lades till i listan." -ForegroundColor Green
-            
-        } while ($true)
-    }
+	do {
+
+		# Lägg till nätverkskort
+		Add-Adapter
+		
+		# Klar?
+		$Choice = Read-UserChoice $(@("Lägg till fler nätverkskort...")) "Välj åtgärd"
+		
+		# Inga fler nätverkskort
+		if ($Choice -eq "Q") {
+			break
+		}
+		
+	} while ($true)
     
     # Lägg till DHCP
     $FavoriteConfigs += [pscustomobject]@{
@@ -443,13 +393,13 @@ function Get-DefaultConfig {
 		}
 	} while ($Continue)
 
-    Write-Notice "Du kan redigera, radera eller lägga till fler favoriter senare i menyn 'Hantera/Redigera'." -ForegroundColor Green
-
-    # Skapa det kompletta konfigurationsobjektet
-    return @{
-        NetworkAdapters = $SelectedAdapters
-        FavoriteConfigurations = $FavoriteConfigs
-    }
+    Write-Notice "Du kan redigera, radera eller lägga till fler favoriter senare i menyn 'Hantera/Redigera'." -ForegroundColor Green -SleepTime 0
+	
+	# Spara till config-datan
+	$Global:ConfigData.FavoriteConfigurations = $FavoriteConfigs
+	
+	# Spara confg-filen
+    Save-ConfigData $Global:ConfigData
 }
 
 # Funktion för att lägga till ny favorit ip-adress
@@ -601,7 +551,7 @@ function Add-Adapter {
     }
 	
 	# De kort som finns på systemet men ännu inte valts
-	$AvailableToChoose = $SystemAdapters | Where-Object {$_ -notin $SelectedAdapters.Name}
+	$AvailableToChoose = $SystemAdapters | Where-Object {$_ -notin $Global:ConfigData.NetworkAdapters.Name}
 	
 	if (-not $AvailableToChoose) {
 		Write-Notice "Alla nätverkskort på systemet är redan valda." -ForegroundColor Green
@@ -615,34 +565,31 @@ function Add-Adapter {
 	# Skriv title
 	Write-Title $Title $Body
 	
-	$AdapterChoice = Read-UserChoice $AdapterList "Välj ett nätverkskort att lägga till" -DisplayProperties @("Nätverkskort", "Aktuell IP", "DHCP") -ShowDone $true -ShowTitles $true
+	$AdapterChoice = Read-UserChoice $AdapterList "Välj ett nätverkskort att lägga till" -DisplayProperties @("Nätverkskort", "Aktuell IP", "DHCP") -ShowTitles $true
 	
 	if ($AdapterChoice -eq "Q") { 
-		# Användaren valde Q, avbryt hela konfigurationen
-		Write-Notice "Konfiguration avbruten." -ForegroundColor Red
-		exit 1 
+		# Användaren valde Q, avbryt
+		return "Q"
 	}
-	
-	if ($AdapterChoice -eq "D") {
-		# Användaren valde "KLAR"
-		break
-	}
-	
+		
 	# Spara namnet på det valda nätverkskortet
 	$AdapterName = $AdapterChoice."Nätverkskort"
 	
 	# Skapa alias för det valda nätverkskortet
 	$AdapterAlias = Read-RequiredInput "Ange ett alias för '$AdapterName'." -DefaultValue $AdapterName
 	
-	# Skapa det nya objektet
-	$SelectedAdapter += [pscustomobject]@{
-		Name = $AdapterName
-		Alias = $AdapterAlias
+	# Lägg till i sparade nätverkskort
+	$SavedNetworksAdapters += [pscustomobject]@{
+			Name = $AdapterName
+			Alias = $AdapterAlias
 	}
-	  
+		  
     # Lägg till i config-datan
-    $Global:ConfigData.NetworkAdapters += [pscustomobject]$SelectedAdapter
-	Write-Notice "Nätverkskortet '$AdapterName' med alias '$AdapterAlias' tillagd" -ForegroundColor Green
+	$Global:ConfigData.NetworkAdapters += [pscustomobject]@{
+                Name = $AdapterName
+                Alias = $AdapterAlias
+            }
+	Write-Notice "Nätverkskortet '$AdapterName' med alias '$AdapterAlias' tillagd" -ForegroundColor Green -SleepTime 0
 	
 	# Spara confg-filen
     Save-ConfigData $Global:ConfigData
@@ -653,7 +600,24 @@ function Remove-Adapter{
 	$Title = "RADERA NÄTVERKSKORT"
 	$Body = ""
 	
+	# Kontrollera att nätverkskort finns i config-data (Funkar inte)
+	if( $Global:ConfigData.NetworkAdapters.Properties.Match('Name').Count ){
+        Write-Notice "Inga nätverkskort att radera." -ForegroundColor Red
+		return
+	}
 	
+	# Användarval
+	$RemoveChoice = Read-UserChoice $CurrentAdapters "Välj kort att radera"
+	
+	if ($RemoveChoice -ne "Q") {
+		# Radera det valda nätverkskortet från config-datan
+		$Global:ConfigData.NetworkAdapters = $Global:ConfigData.NetworkAdapters | Where-Object {$_ -ne $RemoveChoice}
+		
+		Write-Notice "Kortet '$AdapterToRemove' raderades från konfigurationen." -ForegroundColor Green -SleepTime 0
+		
+		# Spara till config-filen
+		Save-ConfigData $Global:ConfigData
+	}
 }
 
 # Hantering av nätverkskort
@@ -868,12 +832,14 @@ do {
 	# Skriv title
 	Write-Title -Title $Title
     
-    $MainMenuOptions = @("Tillämpa sparad IP-konfiguration", "Hantera/Redigera Favoriter och Nätverkskort")
+    $MainMenuOptions = @("Tillämpa sparad IP-konfiguration", "Hantera/Redigera Favoriter och Nätverkskort", "Lägg till nätverkskort", "Radera nätverkskort")
     $MenuChoice = Read-UserChoice $MainMenuOptions "Välj åtgärd"
     
     switch ($MenuChoice) {
         "Tillämpa sparad IP-konfiguration" { Apply-Configuration }
         "Hantera/Redigera Favoriter och Nätverkskort" { Manage-Configuration }
+		"Lägg till nätverkskort" {Add-Adapter}
+		"Radera nätverkskort" {Remove-Adapter}
         "Q" { exit }
     }
     
